@@ -1,0 +1,15 @@
+{
+  "name":"alone-frame/tron",
+  "license":"MIT",
+  "autoload":{
+    "psr-4":{
+      "AloneFrame\\tron\\":"src",
+      "AloneElliptic\\":"package/elliptic-php/lib/",
+      "AloneBN\\":"package/bn-php/lib/",
+      "AloneBI\\":"package/bigint-wrapper-php/lib/"
+    }
+  },
+  "require":{
+    "php":">=8.0"
+  }
+}
