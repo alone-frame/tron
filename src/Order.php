@@ -25,6 +25,8 @@ class Order {
     public string $address = '';
     //查询参数
     public array $param = [];
+    //接口密钥
+    public array|string|null $key = null;
     //默认参数
     public array $def = [
         //每页交易数 20-200
@@ -46,6 +48,14 @@ class Order {
     ];
 
     /**
+     * 设置key,array随机使用
+     * @param array|string|null $key
+     */
+    public function __construct(array|string|null $key = null) {
+        $this->key = $key;
+    }
+
+    /**
      * 设置查询地址
      * @param string $address
      * @return $this
@@ -54,6 +64,26 @@ class Order {
         $self = new static();
         $self->address = $address;
         return $self;
+    }
+
+    /**
+     * 设置查询地址
+     * @param string $address
+     * @return $this
+     */
+    public function wallet(string $address): static {
+        $this->address = $address;
+        return $this;
+    }
+
+    /**
+     * 设置key,array随机使用
+     * @param string|array $key
+     * @return $this
+     */
+    public function key(string|array $key): static {
+        $this->key = $key;
+        return $this;
     }
 
     /**
@@ -153,7 +183,17 @@ class Order {
      * @return $this
      */
     protected function curl(string $path, array $config = []): static {
-        $this->curl = Curl::send(array_merge(['url' => $this->url, 'path' => $path, 'mode' => 'get', 'query' => $this->param], $config));
+        if (!empty($this->key)) {
+            $apiKey = is_array($this->key) ? $this->key : explode(',', $this->key);
+            $header["TRON-PRO-API-KEY"] = $apiKey[array_rand($apiKey)];
+        }
+        $this->curl = Curl::send(array_merge([
+            'url'    => $this->url,
+            'path'   => $path,
+            'mode'   => 'get',
+            'query'  => $this->param,
+            'header' => $header ?? []
+        ], $config));
         return $this;
     }
 
