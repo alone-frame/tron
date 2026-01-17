@@ -5,6 +5,8 @@ namespace AloneFrame\tron\helper;
 use CURLFile;
 
 class Curl {
+    // 是否使用 curl_multi_init
+    public static bool $multi = false;
     //全局代理ip
     public static array $proxy = [
         'default' => 'default',
@@ -80,12 +82,238 @@ class Curl {
 
     //默认浏览器信息
     public static string $browser = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.74 Safari/537.36 Edg/99.0.1150.46';
-
     /**
      * @param array $config
      * @return static
      */
     public static function send(array $config): static {
+        if (!empty($multi)) {
+            return static::sendMulti($config);
+        }
+        $static = new static();
+        $static->body = [];
+        $static->header = [];
+        $config = isset($config['url']) ? [$config] : $config;
+        foreach ($config as $k => $v) {
+            $curl = [];
+            $conf = function($key, $default = '') use ($v) {
+                return ($v[$key] ?? $default) ?: $default;
+            };
+            //记录请求开始时间
+            $time = microtime(true);
+            //请求头
+            $headers = ($conf('header', []) ?? []) ?: [];
+            //请求路径
+            $path = trim($conf('path'), '/');
+            //拼接路径
+            $url = trim($conf('url'), '/') . ($path ? "/$path" : "");
+            $urlShow = static::urlShow($url, $conf('query', []));
+            //设置请求URL参数
+            if ($conf('query')) {
+                $url = $urlShow['url'] ?? $url;
+            }
+            $req['url'] = $url;
+            //请求模式
+            $mode = strtoupper(($conf('mode') ?? 'GET'));
+            if ($mode == 'POST') {
+                $curl[CURLOPT_POST] = true;
+            }
+            $curl[CURLOPT_CUSTOMREQUEST] = $mode;
+            $req['mode'] = $mode;
+            //请求体
+            $body = ($conf('body', []) ?? []) ?: [];
+            if (in_array($mode, ['POST', 'PUT', 'PATCH', 'DELETE'])) {
+                if (is_array($body)) {
+                    //上传文件
+                    $file = ($conf('file') ?? []);
+                    if (!empty($file)) {
+                        foreach ($file as $key => $val) {
+                            if (!empty($filePath = realpath($val))) {
+                                $body[$key] = new CURLFile($filePath);
+                            }
+                        }
+                    }
+                }
+                if (!empty($body)) {
+                    if ($conf('format') == 'json') {
+                        $body = is_array($body) ? json_encode($body) : $body;
+                        $headers['Content-Type'] = 'application/json';
+                    } else {
+                        $body = is_array($body) ? http_build_query($body) : $body;
+                    }
+                    $curl[CURLOPT_POSTFIELDS] = $body;
+                    $headers['Content-Length'] = strlen($body);
+                    $req['body'] = $body;
+                }
+            }
+            //是否ajax
+            if ($conf('ajax')) {
+                $headers['X-Requested-With'] = 'XMLHttpRequest';
+            }
+            //设置解码名称
+            if ($conf('encoding')) {
+                $curl[CURLOPT_ENCODING] = $conf('encoding');
+            }
+            //设置基本认证信息
+            if ($conf('auth')) {
+                $curl[CURLOPT_USERPWD] = $conf('auth');
+            }
+            //设置cookie
+            if (!empty($cookie = $conf('cookie'))) {
+                $cookies = '';
+                if (is_array($cookie)) {
+                    foreach ($cookie as $key => $val) {
+                        if (!empty($v)) {
+                            $cookies .= $key . '=' . $val . ';';
+                        }
+                    }
+                }
+                $curl[CURLOPT_COOKIE] = $cookies ?: $cookie;
+            }
+            //自动设置浏览器信息
+            if ($conf('browser')) {
+                $curl[CURLOPT_USERAGENT] = $conf('browser') === true ? static::$browser : $conf('browser');
+            }
+            //自动跳转时设置开启头部
+            $curl[CURLOPT_FOLLOWLOCATION] = ($conf('follow') ?? false) ?: false;
+            if (!empty($follow)) {
+                $curl[CURLOPT_AUTOREFERER] = true;
+            }
+            //设置代理ip
+            if ($conf('proxy')) {
+                $proxy = $conf('proxy', []);
+                if (!is_array($proxy)) {
+                    $default = (static::$proxy['default'] ?? 'default');
+                    $key = (static::$proxy['key'] ?? $default) ?: 'default';
+                    $key = $key === true ? $default : $key;
+                    $proxy = (static::$proxy['config'][$key] ?? []) ?: [];
+                }
+                if (!empty($ip = ($proxy['ip'] ?? ''))) {
+                    $curl[CURLOPT_PROXY] = $ip;
+                    if (!empty($port = ($proxy['port'] ?? ''))) {
+                        $curl[CURLOPT_PROXYPORT] = $port;
+                    }
+                    if (!empty($user = ($proxy['user'] ?? ''))) {
+                        $curl[CURLOPT_PROXYUSERPWD] = $user;
+                    }
+                    if (!empty($type = ($proxy['type'] ?? ''))) {
+                        $curl[CURLOPT_PROXYTYPE] = ($type == 'http' ? CURLPROXY_HTTP : ($type == 'socks5' ? CURLPROXY_SOCKS5 : $type));
+                    }
+                    if (!empty($auth = ($proxy['auth'] ?? ''))) {
+                        $curl[CURLOPT_PROXYAUTH] = ($auth == 'basic' ? CURLAUTH_BASIC : ($auth == 'ntlm' ? CURLAUTH_NTLM : $auth));
+                    }
+                }
+            }
+            //true 将curl_exec()获取的信息以字符串返回，而不是直接输出。
+            $curl[CURLOPT_RETURNTRANSFER] = true;
+            //true 时将不输出 BODY 部分。同时 Mehtod 变成了 HEAD。修改为 false 时不会变成 GET
+            $curl[CURLOPT_NOBODY] = false;
+            //是否返回头部信息
+            $curl[CURLOPT_HEADER] = true;
+            //连接时间,设置为0，则无限等待
+            $curl[CURLOPT_CONNECTTIMEOUT] = ($conf('connect', 10) ?? 10) ?: 10;
+            //超时时间,设置为0，则无限等待
+            $timeout = ($conf('timeout', 10) ?? 10) ?: 10;
+            $curl[CURLOPT_TIMEOUT] = $timeout;
+            //否检查证书,默认不检查
+            $curl[CURLOPT_SSL_VERIFYPEER] = ($conf('ssl_peer') ?? false);
+            //设置成 2，会检查公用名是否存在，并且是否与提供的主机名匹配。 0 为不检查名称。 在生产环境中，这个值应该是 2（默认值）
+            $curl[CURLOPT_SSL_VERIFYHOST] = ($conf('ssl_host') ?? false);
+            //设置来源
+            $origin = ($urlShow['scheme'] . '://' . $urlShow['host'] . (!empty($urlShow['port']) ? ':' . $urlShow['port'] : ''));
+            if ($conf('origin')) {
+                $origin = $conf('origin') === true ? $origin : $conf('origin');
+                $curl[CURLOPT_REFERER] = $origin;
+                $headers['REFERER'] = $origin;
+                $headers['ORIGIN'] = $origin;
+            }
+            //伪装ip
+            if ($conf('req_ip')) {
+                foreach ($conf('req_ip_name') as $val) {
+                    $headers[$val] = $conf('req_ip');
+                }
+            }
+            //设置请求头
+            $header = [];
+            if (!empty($headers)) {
+                foreach ($headers as $key => $val) {
+                    $header[] = is_numeric($key) ? $val : "$key: $val";
+                }
+                $curl[CURLOPT_HTTPHEADER] = $header;
+                $req['header'] = $header;
+            }
+            //自定设置
+            if (!empty($curls = $conf('curl'))) {
+                foreach ($curls as $key => $val) {
+                    $curl[$key] = $val;
+                }
+            }
+            $init = curl_init();
+            curl_setopt($init, CURLOPT_URL, $url);
+            foreach ($curl as $ck => $cv) {
+                curl_setopt($init, $ck, $cv);
+            }
+            $response = curl_exec($init);
+            $info = curl_getinfo($init);
+            $code = $info['http_code'] ?? 0;
+            $size = $info['header_size'] ?? 0;
+            $header = trim(trim(substr($response, 0, $size), "\r\n"), "\r\n");
+            if (curl_errno($init)) {
+                $static->body[$k] = [
+                    //curl
+                    'curl'   => $curl,
+                    //请求url
+                    'url'    => $url,
+                    //请求信息
+                    'req'    => $req,
+                    //响应信息
+                    'info'   => $info,
+                    //执行时间
+                    'time'   => (microtime(true) - $time),
+                    //响应信息
+                    'res'    => $response,
+                    //状态码
+                    'code'   => $code,
+                    //返回头部信息
+                    'header' => $header,
+                    //出错
+                    'error'  => curl_error($init),
+                    //时间
+                    'date'   => date("Y-m-d H:i:s")
+                ];
+            } else {
+                $static->body[$k] = [
+                    //curl
+                    'curl'   => $curl,
+                    //请求url
+                    'url'    => $url,
+                    //请求信息
+                    'req'    => $req,
+                    //响应信息
+                    'info'   => $info,
+                    //执行时间
+                    'time'   => (microtime(true) - $time),
+                    //响应信息
+                    'res'    => $response,
+                    //状态码
+                    'code'   => $code,
+                    //返回头部信息
+                    'header' => $header,
+                    //内容
+                    'body'   => substr($response, $size),
+                    //时间
+                    'date'   => date("Y-m-d H:i:s")
+                ];
+            }
+            curl_close($init);
+        }
+        return $static;
+    }
+    /**
+     * @param array $config
+     * @return static
+     */
+    public static function sendMulti(array $config): static {
 
         $config = isset($config['url']) ? [$config] : $config;
 
